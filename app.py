@@ -1,28 +1,32 @@
+import os
 import pandas as pd
 import pyarrow.parquet as pq
 
-# Caminho do arquivo (ajuste se necessário)
-file_path = "fundos_202512.parquet"
+# Caminho seguro para a pasta
+folder_path = os.path.join(os.path.dirname(__file__), "dados_parquet")
 
-# --- 1. Ler o arquivo parquet ---
+# Caminho completo do arquivo
+file_path = os.path.join(folder_path, "fundos_202512.parquet")
+
+# Verificação importante
+if not os.path.exists(file_path):
+    st.error(f"Arquivo não encontrado: {file_path}")
+    raise FileNotFoundError(file_path)
+
+# Carregar o arquivo
 table = pq.read_table(file_path)
 df = table.to_pandas()
 
-# Converter DATA para datetime (garante ordenação correta)
+# Converter a data
 df["DATA"] = pd.to_datetime(df["DATA"])
 
-# --- 2. Pedir o CNPJ ---
-cnpj_input = input("Digite o CNPJ do fundo: ").strip()
+# Input do CNPJ
+cnpj_input = st.text_input("Digite o CNPJ do fundo:")
 
-# --- 3. Filtrar pelo CNPJ ---
-df_filtrado = df[df["CNPJ"] == cnpj_input]
+if cnpj_input:
+    df_filtrado = df[df["CNPJ"] == cnpj_input].sort_values("DATA")
 
-# --- 4. Ordenar por DATA ---
-df_filtrado = df_filtrado.sort_values("DATA")
-
-# --- 5. Mostrar resultado ---
-if df_filtrado.empty:
-    print("\n⚠ Nenhum registro encontrado para esse CNPJ.\n")
-else:
-    print("\nPrimeiras linhas do fundo selecionado:\n")
-    print(df_filtrado.head(20).to_string(index=False))  # mostra até 20 linhas formatadas
+    if df_filtrado.empty:
+        st.warning("Nenhum registro encontrado.")
+    else:
+        st.dataframe(df_filtrado.head(20))
