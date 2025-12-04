@@ -1,0 +1,42 @@
+name: Atualizar Fundos CVM
+
+on:
+  workflow_dispatch:        # Permite rodar manualmente
+  schedule:
+    - cron: "0 8 * * *"     # Todos os dias às 8h UTC
+
+permissions:
+  contents: write           # Permissão para fazer push no repositório
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar repositório
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true     # Usa o GITHUB_TOKEN para push
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: |
+          pip install pandas pyarrow duckdb
+
+      - name: Executar script de junção
+        run: |
+          python "dados_fundos.py"
+
+      - name: Commit e Push
+        run: |
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
+
+          git add fundos_completo.parquet || echo "Nada para adicionar"
+          git commit -m "Atualização automática" || echo "Sem mudanças"
+          
+          git push origin HEAD:main
