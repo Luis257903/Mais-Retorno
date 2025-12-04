@@ -2,12 +2,12 @@ name: Atualizar Fundos - Release
 
 on:
   schedule:
-    - cron: "0 8 * * *"   # Executa todos os dias às 8 UTC
-  workflow_dispatch:        # Permite rodar manualmente
+    - cron: "0 8 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
-  
+
 jobs:
   atualizar:
     runs-on: ubuntu-latest
@@ -21,26 +21,28 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Instalar GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
       - name: Instalar dependências
         run: |
           pip install pandas pyarrow duckdb
 
       - name: Executar script juntar_fundos.py
-        run: |
-          python "juntar_fundos.py"
+        run: python juntar_fundos.py
 
-      # --- APAGAR RELEASE ANTIGA ---
       - name: Apagar release antiga (se existir)
         run: |
           gh release delete latest -y || true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- CRIAR NOVA RELEASE COM O PARQUET ---
       - name: Criar release nova com o arquivo atualizado
         run: |
           gh release create latest fundos_completo.parquet \
             --title "Atualização diária dos fundos" \
             --notes "Arquivo gerado automaticamente pelo GitHub Actions."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
