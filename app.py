@@ -1,58 +1,28 @@
-import streamlit as st
 import pandas as pd
-import os
+import pyarrow.parquet as pq
 
-st.title("Consulta de Fundos por CNPJ")
+# Caminho do arquivo (ajuste se necessário)
+file_path = "fundos_202512.parquet"
 
-# ⬇️ Input do usuário
-cnpj = st.text_input("Digite o CNPJ do fundo (somente números):")
+# --- 1. Ler o arquivo parquet ---
+table = pq.read_table(file_path)
+df = table.to_pandas()
 
-@st.cache_data(show_spinner=True)
-def carregar_cnpj(cnpj_alvo: str):
-    pasta = "dados_parquet"
+# Converter DATA para datetime (garante ordenação correta)
+df["DATA"] = pd.to_datetime(df["DATA"])
 
-    dfs = []
+# --- 2. Pedir o CNPJ ---
+cnpj_input = input("Digite o CNPJ do fundo: ").strip()
 
-    # Lista todos os arquivos parquet
-    arquivos = sorted([f for f in os.listdir(pasta) if f.endswith(".parquet")])
+# --- 3. Filtrar pelo CNPJ ---
+df_filtrado = df[df["CNPJ"] == cnpj_input]
 
-    for arquivo in arquivos:
-        caminho = os.path.join(pasta, arquivo)
+# --- 4. Ordenar por DATA ---
+df_filtrado = df_filtrado.sort_values("DATA")
 
-        # Lê apenas colunas necessárias (mais rápido!)
-        try:
-            df = pd.read_parquet(
-                caminho,
-                columns=["CNPJ", "DATA", "COTA"]
-            )
-        except:
-            continue
-
-        # Filtra só o CNPJ desejado
-        recorte = df[df["CNPJ"] == cnpj_alvo]
-
-        if not recorte.empty:
-            dfs.append(recorte)
-
-    if not dfs:
-        return None
-
-    # Junta tudo e ordena
-    df_final = pd.concat(dfs).sort_values("DATA").reset_index(drop=True)
-
-    return df_final
-
-
-# Executa após digitar CNPJ
-if cnpj:
-    with st.spinner("Carregando dados do fundo..."):
-        dados = carregar_cnpj(cnpj)
-
-    if dados is None:
-        st.warning("❗ Nenhum registro encontrado para este CNPJ.")
-    else:
-        st.success(f"Registros encontrados: {len(dados)}")
-
-        # ⚠️ Mostra só as 20 primeiras linhas
-        st.subheader("Primeiras 20 linhas:")
-        st.dataframe(dados.head(20))
+# --- 5. Mostrar resultado ---
+if df_filtrado.empty:
+    print("\n⚠ Nenhum registro encontrado para esse CNPJ.\n")
+else:
+    print("\nPrimeiras linhas do fundo selecionado:\n")
+    print(df_filtrado.head(20).to_string(index=False))  # mostra até 20 linhas formatadas
