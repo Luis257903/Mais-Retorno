@@ -5,7 +5,7 @@ import io
 import os
 
 # Lista manual de meses (202101 a 202311)
-meses = [202511, 202512]
+meses = [202511,202512]
 
 # Pasta de saída
 os.makedirs("dados_parquet", exist_ok=True)
