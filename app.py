@@ -1,33 +1,53 @@
-import streamlit as st
 import os
 import pandas as pd
 import pyarrow.parquet as pq
+import streamlit as st
 
-# Caminho seguro para a pasta
+st.title("Consulta de Fundos por CNPJ")
+
+# Caminho da pasta de dados
 folder_path = os.path.join(os.path.dirname(__file__), "dados_parquet")
 
-# Caminho completo do arquivo
-file_path = os.path.join(folder_path, "fundos_202512.parquet")
+# Lista todos os arquivos .parquet
+arquivos = sorted([
+    os.path.join(folder_path, f)
+    for f in os.listdir(folder_path)
+    if f.endswith(".parquet")
+])
 
-# Verificação importante
-if not os.path.exists(file_path):
-    st.error(f"Arquivo não encontrado: {file_path}")
-    raise FileNotFoundError(file_path)
+st.write(f"Arquivos parquet encontrados: {len(arquivos)}")
 
-# Carregar o arquivo
-table = pq.read_table(file_path)
-df = table.to_pandas()
-
-# Converter a data
-df["DATA"] = pd.to_datetime(df["DATA"])
-
-# Input do CNPJ
+# Input do usuário
 cnpj_input = st.text_input("Digite o CNPJ do fundo:")
 
 if cnpj_input:
-    df_filtrado = df[df["CNPJ"] == cnpj_input].sort_values("DATA")
 
-    if df_filtrado.empty:
-        st.warning("Nenhum registro encontrado.")
+    lista_df = []  # armazenará apenas registros do CNPJ escolhido
+
+    for arquivo in arquivos:
+        try:
+            table = pq.read_table(arquivo)
+            df = table.to_pandas()
+
+            # Garantir que DATA é datetime
+            if "DATA" in df.columns:
+                df["DATA"] = pd.to_datetime(df["DATA"])
+
+            # Filtrar somente o CNPJ desejado
+            filtrado = df[df["CNPJ"] == cnpj_input]
+
+            if not filtrado.empty:
+                lista_df.append(filtrado)
+
+        except Exception as e:
+            st.warning(f"Erro ao ler {arquivo}: {e}")
+
+    # Junta tudo
+    if lista_df:
+        df_final = pd.concat(lista_df, ignore_index=True)
+        df_final = df_final.sort_values("DATA")
+
+        st.subheader("Resultados encontrados")
+        st.dataframe(df_final.head(20))
     else:
-        st.dataframe(df_filtrado.head(20))
+        st.error("Nenhum registro encontrado para esse CNPJ.")
