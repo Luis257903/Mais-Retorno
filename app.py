@@ -23,13 +23,13 @@ def carregar_cnpj(cnpj_alvo: str):
         try:
             df = pd.read_parquet(
                 caminho,
-                columns=["cnpj_fundo", "dt_comptc", "vl_quota"]
+                columns=["CNPJ", "DATA", "COTA"]
             )
         except:
             continue
 
         # Filtra só o CNPJ desejado
-        recorte = df[df["cnpj_fundo"] == cnpj_alvo]
+        recorte = df[df["CNPJ"] == cnpj_alvo]
 
         if not recorte.empty:
             dfs.append(recorte)
@@ -38,7 +38,7 @@ def carregar_cnpj(cnpj_alvo: str):
         return None
 
     # Junta tudo e ordena
-    df_final = pd.concat(dfs).sort_values("dt_comptc").reset_index(drop=True)
+    df_final = pd.concat(dfs).sort_values("DATA").reset_index(drop=True)
 
     return df_final
 
