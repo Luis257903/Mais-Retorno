@@ -5,7 +5,7 @@ import io
 import os
 
 # Lista manual de meses (202101 a 202311)
-meses = [202512]
+meses = [202511, 202512]
 
 # Pasta de saída
 os.makedirs("dados_parquet", exist_ok=True)
@@ -45,7 +45,7 @@ for mes in meses:
             ):
                 # Renomeia e limpa
                 chunk = chunk.rename(columns={
-                    "CNPJ_FUNDO": "CNPJ",
+                    "CNPJ_FUNDO_CLASSE": "CNPJ",
                     "DT_COMPTC": "DATA",
                     "VL_QUOTA": "COTA",
                     "VL_PATRIM_LIQ": "PATRIMÔNIO LÍQUIDO",
@@ -55,7 +55,7 @@ for mes in meses:
                 })
 
                 # Remove colunas não utilizadas
-                drop_cols = ['TP_FUNDO', 'ID_SUBCLASSE', 'VL_TOTAL']
+                drop_cols = ['TP_FUNDO_CLASSE', 'ID_SUBCLASSE', 'VL_TOTAL']
                 chunk = chunk.drop(columns=drop_cols, errors='ignore')
 
                 # Converte DATA
