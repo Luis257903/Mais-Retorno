@@ -28,7 +28,7 @@ jobs:
         run: python dados_fundos.py
 
       - name: Atualizar Indicadores BCB
-        run: cdi.py
+        run: python cdi.py
 
       - name: Commit e Push
         run: |
