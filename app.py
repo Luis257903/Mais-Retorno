@@ -16,9 +16,9 @@ cnpj_input = st.text_input("Digite o CNPJ do fundo (formato igual ao parquet):")
 
 if cnpj_input:
 
-    # -------------------------------
-    # 1) CONSULTA ULTRA RÁPIDA
-    # -------------------------------
+    # ================================
+    # 1) CARREGA O FUNDO VIA DUCKDB
+    # ================================
     query = f"""
         SELECT *
         FROM read_parquet('{parquet_pattern}')
@@ -33,33 +33,51 @@ if cnpj_input:
             st.warning("Nenhum registro encontrado para esse CNPJ.")
             st.stop()
 
-        st.subheader("Primeiras linhas do fundo:")
-        st.dataframe(df.head())
-
-        # -------------------------------
-        # 2) CALCULAR RENTABILIDADE
-        # -------------------------------
-
-        # Garantir datetime e ordenação
+        # Converter data corretamente
         df["DATA"] = pd.to_datetime(df["DATA"])
         df = df.sort_values("DATA")
 
-        # Calcular retorno diário/mensal
-        df["RETORNO"] = df["COTA"].pct_change().fillna(0)
+        # ================================
+        # 2) SELETOR DE INTERVALO DE DATAS
+        # ================================
+        data_min = df["DATA"].min()
+        data_max = df["DATA"].max()
 
-        # Rentabilidade acumulada
+        periodo = st.date_input(
+            "Selecione o período da análise:",
+            [data_min, data_max],
+            min_value=data_min,
+            max_value=data_max
+        )
+
+        data_ini = pd.to_datetime(periodo[0])
+        data_fim = pd.to_datetime(periodo[1])
+
+        # Filtra o período escolhido
+        df = df[(df["DATA"] >= data_ini) & (df["DATA"] <= data_fim)]
+
+        if df.empty:
+            st.warning("Não há dados para o intervalo selecionado.")
+            st.stop()
+
+        st.subheader("Primeiras linhas do fundo filtrado:")
+        st.dataframe(df.head())
+
+        # ================================
+        # 3) CÁLCULO DA RENTABILIDADE
+        # ================================
+        df["RETORNO"] = df["COTA"].pct_change().fillna(0)
         df["ACUMULADO"] = (1 + df["RETORNO"]).cumprod() - 1
 
-        # -------------------------------
-        # 3) GERAR GRÁFICO Plotly
-        # -------------------------------
-
+        # ================================
+        # 4) GRÁFICO DE RENTABILIDADE
+        # ================================
         fig = go.Figure()
 
-        # Cor aleatória dentro da paleta Blues (igual ao seu Dashboard)
+        # Cor aleatória dentro do Blues
         tons_escuros = [i / 100 for i in range(20, 100, 25)]
-        tons_aleatorios = random.choice(tons_escuros)
-        cor_serie = pc.sample_colorscale("Blues", [tons_aleatorios])[0]
+        ton = random.choice(tons_escuros)
+        cor_serie = pc.sample_colorscale("Blues", [ton])[0]
 
         fig.add_trace(go.Scatter(
             x=df["DATA"],
