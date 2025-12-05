@@ -6,116 +6,131 @@ import plotly.graph_objects as go
 import plotly.colors as pc
 import random
 
-st.title("Consulta de Rentabilidade - Fundos por CNPJ (DuckDB Ultra Rápido)")
+st.title("Rentabilidade de Fundos (Múltiplos CNPJs) - DuckDB Turbo")
 
-# Caminho da pasta dos parquets
+# === Caminho dos parquets ===
 folder_path = os.path.join(os.path.dirname(__file__), "dados_parquet")
 parquet_pattern = os.path.join(folder_path, "*.parquet")
 
-cnpj_input = st.text_input("Digite o CNPJ do fundo (formato igual ao parquet):")
+# === Entrada múltipla de CNPJs ===
+lista_input = st.text_area(
+    "Digite um ou vários CNPJs (um por linha):",
+    height=120,
+    placeholder="Exemplo:\n34.431.415/0001-31\n12.345.678/0001-22"
+)
 
-if cnpj_input:
+if lista_input.strip():
 
-    # ================================
-    # 1) CARREGA O FUNDO VIA DUCKDB
-    # ================================
+    cnpjs = [c.strip() for c in lista_input.split("\n") if c.strip()]
+
+    # ============================================
+    # 1) Carregar todos os fundos via DuckDB
+    # ============================================
     query = f"""
         SELECT *
         FROM read_parquet('{parquet_pattern}')
-        WHERE CNPJ = '{cnpj_input}'
-        ORDER BY DATA
+        WHERE CNPJ IN ({','.join("'" + c + "'" for c in cnpjs)})
+        ORDER BY CNPJ, DATA
     """
 
-    try:
-        df = duckdb.query(query).df()
+    df = duckdb.query(query).df()
 
-        if df.empty:
-            st.warning("Nenhum registro encontrado para esse CNPJ.")
-            st.stop()
+    if df.empty:
+        st.warning("Nenhum dado encontrado para os CNPJs informados.")
+        st.stop()
 
-        # Converter data corretamente
-        df["DATA"] = pd.to_datetime(df["DATA"])
-        df = df.sort_values("DATA")
+    df["DATA"] = pd.to_datetime(df["DATA"])
+    df = df.sort_values(["CNPJ", "DATA"])
 
-        # ================================
-        # 2) SELETOR DE INTERVALO DE DATAS
-        # ================================
-        data_min = df["DATA"].min()
-        data_max = df["DATA"].max()
+    # ============================================
+    # 2) Determinar o período possível da análise
+    # ============================================
+    # Cada fundo tem sua data mínima, pegamos a MAIS RECENTE
+    datas_inicio = df.groupby("CNPJ")["DATA"].min()
+    data_inicio_real = datas_inicio.max()    # igual ao seu dashboard antigo
+    data_fim_real = df["DATA"].max()
 
-        periodo = st.date_input(
-            "Selecione o período da análise:",
-            [data_min, data_max],
-            min_value=data_min,
-            max_value=data_max
-        )
+    # ============================================
+    # 3) Seletor de período
+    # ============================================
+    periodo = st.date_input(
+        "Selecione o período da análise:",
+        [data_inicio_real, data_fim_real],
+        min_value=data_inicio_real,
+        max_value=data_fim_real
+    )
 
-        data_ini = pd.to_datetime(periodo[0])
-        data_fim = pd.to_datetime(periodo[1])
+    data_ini = pd.to_datetime(periodo[0])
+    data_fim = pd.to_datetime(periodo[1])
 
-        # Filtra o período escolhido
-        df = df[(df["DATA"] >= data_ini) & (df["DATA"] <= data_fim)]
+    # Filtrar
+    df_filtrado = df[(df["DATA"] >= data_ini) & (df["DATA"] <= data_fim)]
 
-        if df.empty:
-            st.warning("Não há dados para o intervalo selecionado.")
-            st.stop()
+    if df_filtrado.empty:
+        st.warning("Não há dados no intervalo escolhido.")
+        st.stop()
 
-        st.subheader("Primeiras linhas do fundo filtrado:")
-        st.dataframe(df.head())
+    # ============================================
+    # 4) Calcular rentabilidade por fundo
+    # ============================================
+    fundos_rent = {}
 
-        # ================================
-        # 3) CÁLCULO DA RENTABILIDADE
-        # ================================
-        df["RETORNO"] = df["COTA"].pct_change().fillna(0)
-        df["ACUMULADO"] = (1 + df["RETORNO"]).cumprod() - 1
+    for cnpj, tabela in df_filtrado.groupby("CNPJ"):
 
-        # ================================
-        # 4) GRÁFICO DE RENTABILIDADE
-        # ================================
-        fig = go.Figure()
+        tabela = tabela.sort_values("DATA").copy()
+        tabela["RET"] = tabela["COTA"].pct_change().fillna(0)
+        tabela["ACUM"] = (1 + tabela["RET"]).cumprod() - 1
 
-        # Cor aleatória dentro do Blues
-        tons_escuros = [i / 100 for i in range(20, 100, 25)]
+        fundos_rent[cnpj] = tabela
+
+    # ============================================
+    # 5) GRÁFICO FINAL
+    # ============================================
+    fig = go.Figure()
+
+    tons_escuros = [i / 100 for i in range(20, 100, 25)]  # tons escuros de blue
+
+    legendas = []
+
+    for i, (cnpj, tabela) in enumerate(fundos_rent.items()):
+
         ton = random.choice(tons_escuros)
-        cor_serie = pc.sample_colorscale("Blues", [ton])[0]
+        cor = pc.sample_colorscale("Blues", [ton])[0]
 
         fig.add_trace(go.Scatter(
-            x=df["DATA"],
-            y=df["ACUMULADO"],
+            x=tabela["DATA"],
+            y=tabela["ACUM"],
             mode="lines",
-            line=dict(color=cor_serie, width=4),
-            name="Rentabilidade",
+            name=cnpj,
+            line=dict(color=cor, width=3),
             line_shape="spline"
         ))
 
-        # Anotação final
+        # anotação final
         fig.add_annotation(
-            x=df["DATA"].iloc[-1],
-            y=df["ACUMULADO"].iloc[-1],
-            text=f"{df['ACUMULADO'].iloc[-1]*100:.2f}%",
+            x=tabela["DATA"].iloc[-1],
+            y=tabela["ACUM"].iloc[-1],
+            text=f"{tabela['ACUM'].iloc[-1]*100:.2f}%",
             showarrow=False,
-            font=dict(color='white', size=16),
-            align='center',
-            bgcolor=cor_serie,
-            bordercolor=cor_serie,
-            borderwidth=1,
-            borderpad=4
+            bgcolor=cor,
+            font=dict(color="white", size=14)
         )
 
-        fig.update_layout(
-            title=f"Rentabilidade Acumulada - {cnpj_input}",
-            xaxis_title="Data",
-            yaxis_title="Rentabilidade",
-            template="plotly_white",
-            height=550,
-            yaxis_tickformat=".2%",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)"
-        )
+        legendas.append(cnpj)
 
-        st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        title="Rentabilidade Acumulada dos Fundos",
+        xaxis_title="Data",
+        yaxis_title="Rentabilidade",
+        yaxis_tickformat=".2%",
+        template="plotly_white",
+        height=600,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=False),
+    )
 
-    except Exception as e:
-        st.error(f"Erro ao consultar os dados: {e}")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.success("Gráfico gerado com sucesso!")
