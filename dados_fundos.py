@@ -3,37 +3,109 @@ import pandas as pd
 import zipfile
 import io
 import os
+import datetime as dt
 
-# Lista manual de meses (202101 a 202311)
-meses = [202511,202512]
-
-# Pasta de saída
+# ============================================================
+#  CRIA PASTA DE ARMAZENAMENTO
+# ============================================================
 os.makedirs("dados_parquet", exist_ok=True)
 
-# Loop mês a mês (NÃO ARMAZENA TUDO NA MEMÓRIA)
+
+# ============================================================
+# 1) DETECTA ÚLTIMO ARQUIVO DISPONÍVEL
+# ============================================================
+def obter_ultimo_mes_existente():
+    arquivos = os.listdir("dados_parquet")
+    meses = []
+
+    for f in arquivos:
+        if f.startswith("fundos_") and f.endswith(".parquet"):
+            try:
+                num = int(f.replace("fundos_", "").replace(".parquet", ""))
+                meses.append(num)
+            except:
+                pass
+
+    if not meses:
+        return None
+
+    return max(meses)
+
+
+# ============================================================
+# 2) GERA LISTA DE MESES QUE DEVEM SER BAIXADOS
+# ============================================================
+def gerar_lista_meses():
+    hoje = dt.date.today()
+    mes_atual = hoje.year * 100 + hoje.month  # ex: 202512
+
+    ultimo = obter_ultimo_mes_existente()
+
+    # 1 — Nenhum arquivo ainda → baixa só o mês atual
+    if ultimo is None:
+        return [mes_atual]
+
+    meses = []
+
+    # 2 — Sempre baixar o mês atual (para substituir diariamente)
+    meses.append(mes_atual)
+
+    # 3 — Se virou o mês e existem meses faltantes (ex: 202512 → 202601)
+    if mes_atual > ultimo:
+        ano = ultimo // 100
+        mes = ultimo % 100
+
+        while True:
+            mes += 1
+            if mes == 13:
+                mes = 1
+                ano += 1
+
+            novo_mes = ano * 100 + mes
+            meses.append(novo_mes)
+
+            if novo_mes == mes_atual:
+                break
+
+    # Remove duplicatas e ordena
+    meses = sorted(list(set(meses)))
+
+    return meses
+
+
+# ============================================================
+#  LISTA FINAL DOS MESES QUE SERÃO BAIXADOS
+# ============================================================
+meses = gerar_lista_meses()
+print("Meses que serão processados:", meses)
+
+
+# ============================================================
+# 3) DOWNLOAD + CONVERSÃO PARA PARQUET
+# ============================================================
 for mes in meses:
-    print(f"Baixando e processando: {mes}")
+    print(f"\n🔽 Baixando e processando: {mes}")
 
     url = f"https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_{mes}.zip"
-    
+
     try:
         r = requests.get(url)
         r.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        print(f"Erro ao baixar {mes}: {e}")
+        print(f"❌ Erro ao baixar {mes}: {e}")
         continue
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+
+        # encontra o csv dentro do ZIP
         nome_csv = [n for n in z.namelist() if n.lower().endswith(".csv")][0]
 
-        # Nome final do arquivo parquet por mês
         nome_parquet = f"dados_parquet/fundos_{mes}.parquet"
 
-        # Criar lista para armazenar chunks temporários
         lista_chunks = []
 
         with z.open(nome_csv) as f:
-            # Ler em chunks SEM estourar memória
+
             for chunk in pd.read_csv(
                 f,
                 sep=";",
@@ -43,7 +115,8 @@ for mes in meses:
                 chunksize=400_000,
                 low_memory=False
             ):
-                # Renomeia e limpa
+
+                # Renomear colunas
                 chunk = chunk.rename(columns={
                     "CNPJ_FUNDO_CLASSE": "CNPJ",
                     "DT_COMPTC": "DATA",
@@ -51,36 +124,41 @@ for mes in meses:
                     "VL_PATRIM_LIQ": "PATRIMÔNIO LÍQUIDO",
                     "CAPTC_DIA": "CAPTAÇÃO",
                     "RESG_DIA": "RESGATES",
-                    "NR_COTST": "NÚMERO DE COTISTAS"
+                    "NR_COTST": "NÚMERO DE COTISTAS",
                 })
 
-                # Remove colunas não utilizadas
-                drop_cols = ['TP_FUNDO_CLASSE', 'ID_SUBCLASSE', 'VL_TOTAL']
-                chunk = chunk.drop(columns=drop_cols, errors='ignore')
+                # Remove colunas inúteis
+                chunk = chunk.drop(columns=['TP_FUNDO_CLASSE', 'ID_SUBCLASSE', 'VL_TOTAL'], errors='ignore')
 
-                # Converte DATA
-                chunk["DATA"] = pd.to_datetime(chunk["DATA"])
+                # Converte formatos
+                chunk["DATA"] = pd.to_datetime(chunk["DATA"], errors='coerce')
 
                 chunk["COTA"] = pd.to_numeric(chunk["COTA"], errors='coerce')
-
                 chunk["PATRIMÔNIO LÍQUIDO"] = pd.to_numeric(chunk["PATRIMÔNIO LÍQUIDO"], errors='coerce')
-
                 chunk["CAPTAÇÃO"] = pd.to_numeric(chunk["CAPTAÇÃO"], errors='coerce')
-
                 chunk["RESGATES"] = pd.to_numeric(chunk["RESGATES"], errors='coerce')
 
-                chunk["NÚMERO DE COTISTAS"] = pd.to_numeric(chunk["NÚMERO DE COTISTAS"], errors='coerce')
-                
-                # Armazena o chunk já processado
+                # NÚMERO DE COTISTAS deve SEMPRE ser string
+                chunk["NÚMERO DE COTISTAS"] = chunk["NÚMERO DE COTISTAS"].astype(str)
+
+                # Remover totalmente qualquer __index_level_0__
+                if "__index_level_0__" in chunk.columns:
+                    chunk = chunk.drop(columns=["__index_level_0__"])
+
                 lista_chunks.append(chunk)
 
-        # Concatena APENAS os chunks daquele mês
         if lista_chunks:
-            df_mes = pd.concat(lista_chunks)
-            # Salva um PARQUET por mês
-            df_mes.to_parquet(nome_parquet, index=True)
-            print(f"Salvo: {nome_parquet}")
-        else:
-             print(f"Nenhum dado encontrado para {mes}")
+            df_mes = pd.concat(lista_chunks, ignore_index=True)
 
-print("Processo concluído!")
+            # Garante coluna DATE ordenada
+            df_mes = df_mes.sort_values("DATA")
+
+            # Remove qualquer índice estranho
+            df_mes = df_mes.reset_index(drop=True)
+
+            df_mes.to_parquet(nome_parquet, index=False)
+            print(f"✅ Salvo: {nome_parquet}")
+        else:
+            print(f"⚠ Nenhum dado encontrado para o mês {mes}")
+
+print("\n🎉 Processo concluído com sucesso!")
