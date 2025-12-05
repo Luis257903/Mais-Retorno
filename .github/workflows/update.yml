@@ -1,9 +1,9 @@
-name: Atualizar Dados CVM + BCB
+name: Atualizar Dados CVM + BCB + DuckDB
 
 on:
   schedule:
-    - cron: "0 8 * * *"
-  workflow_dispatch:
+    - cron: "0 8 * * *"     # todos os dias às 08:00 UTC
+  workflow_dispatch:        # executar manualmente
 
 permissions:
   contents: write
@@ -22,12 +22,16 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: pip install pandas requests pyarrow duckdb
+        run: |
+          pip install pandas requests pyarrow duckdb
 
-      - name: Atualizar Fundos
+      - name: Baixar Fundos CVM (gera parquets)
         run: python dados_fundos.py
 
-      - name: Atualizar Indicadores BCB
+      - name: Atualizar Banco DuckDB com Fundos
+        run: python scripts/update_duckdb.py
+
+      - name: Atualizar Indicadores BCB no DuckDB
         run: python cdi.py
 
       - name: Commit e Push
@@ -35,6 +39,7 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
 
+          git add dados_parquet || true
           git add base.duckdb || true
-          git commit -m "Atualização automática" || true
+          git commit -m "Atualização automática (CVM + BCB + DuckDB)" || true
           git push
