@@ -1,53 +1,34 @@
 import os
+import duckdb
 import pandas as pd
-import pyarrow.parquet as pq
 import streamlit as st
 
-st.title("Consulta de Fundos por CNPJ")
+st.title("Consulta ultra rápida de fundos por CNPJ")
 
-# Caminho da pasta de dados
+# Caminho da pasta de Parquets
 folder_path = os.path.join(os.path.dirname(__file__), "dados_parquet")
 
-# Lista todos os arquivos .parquet
-arquivos = sorted([
-    os.path.join(folder_path, f)
-    for f in os.listdir(folder_path)
-    if f.endswith(".parquet")
-])
+# Caminho wildcard para o DuckDB ler tudo de uma vez
+parquet_pattern = os.path.join(folder_path, "*.parquet")
 
-st.write(f"Arquivos parquet encontrados: {len(arquivos)}")
-
-# Input do usuário
 cnpj_input = st.text_input("Digite o CNPJ do fundo:")
 
 if cnpj_input:
 
-    lista_df = []  # armazenará apenas registros do CNPJ escolhido
+    query = f"""
+        SELECT *
+        FROM read_parquet('{parquet_pattern}')
+        WHERE CNPJ = '{cnpj_input}'
+        ORDER BY DATA
+    """
 
-    for arquivo in arquivos:
-        try:
-            table = pq.read_table(arquivo)
-            df = table.to_pandas()
+    try:
+        df = duckdb.query(query).df()   # vira pandas automaticamente
 
-            # Garantir que DATA é datetime
-            if "DATA" in df.columns:
-                df["DATA"] = pd.to_datetime(df["DATA"])
+        if df.empty:
+            st.warning("Nenhum registro encontrado para esse CNPJ.")
+        else:
+            st.dataframe(df.head(20))
 
-            # Filtrar somente o CNPJ desejado
-            filtrado = df[df["CNPJ"] == cnpj_input]
-
-            if not filtrado.empty:
-                lista_df.append(filtrado)
-
-        except Exception as e:
-            st.warning(f"Erro ao ler {arquivo}: {e}")
-
-    # Junta tudo
-    if lista_df:
-        df_final = pd.concat(lista_df, ignore_index=True)
-        df_final = df_final.sort_values("DATA")
-
-        st.subheader("Resultados encontrados")
-        st.dataframe(df_final.head(20))
-    else:
-        st.error("Nenhum registro encontrado para esse CNPJ.")
+    except Exception as e:
+        st.error(f"Erro ao consultar os dados: {e}")
