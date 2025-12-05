@@ -1,40 +1,51 @@
 import os
+import requests
 import duckdb
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-# =======================================
-# IMPORTAÇÃO INTELIGENTE (lazy load)
-# =======================================
-import Nome     # agora não carrega arquivos pesados no startup
-from cdi import CDI_M_Correto  # CDI mensal (index = datas)
+import Nome
+from cdi import CDI_M_Correto
 
 # =======================================
-# STREAMLIT CONFIG
+# CONFIGURA STREAMLIT
 # =======================================
 st.set_page_config(layout="wide")
-st.title("📈 Rentabilidade de Fundos + CDI Diário (via DuckDB)")
+st.title("📈 Rentabilidade de Fundos (via DuckDB) + CDI Diário")
 
 # =======================================
-# LAZY LOAD DOS FUNDOS — rápido e cacheado
+# DOWNLOAD AUTOMÁTICO DO BANCO
+# =======================================
+DB_PATH = "base.duckdb"
+DB_RELEASE_URL = (
+    "https://github.com/Luis257903/Mais-Retorno/releases/download/banco-latest/base.duckdb"
+)
+
+if not os.path.exists(DB_PATH):
+    st.warning("Baixando banco de dados inicial...")
+    r = requests.get(DB_RELEASE_URL)
+    open(DB_PATH, "wb").write(r.content)
+    st.success("Banco atualizado carregado!")
+
+# =======================================
+# LAZY LOAD DOS FUNDOS (nomes)
 # =======================================
 @st.cache_data(show_spinner=False)
 def load_fundos2():
-    return Nome.fundos2     # só carrega quando necessário
+    return Nome.fundos2
 
 fundos2 = load_fundos2()
 
 # =======================================
-# INTERFACE — seleção dos fundos
+# INTERFACE — escolha de fundos
 # =======================================
 fundos_unicos = fundos2[["CNPJ", "Nome"]].dropna().drop_duplicates()
 fundos_unicos["Label"] = fundos_unicos["Nome"] + " - " + fundos_unicos["CNPJ"]
-
 options_dict = fundos_unicos.set_index("Label")["CNPJ"].to_dict()
 
 selected_labels = st.multiselect("Selecione os fundos:", list(options_dict.keys()))
-selected_cnpjs = [options_dict[x] for x in selected_labels]
+selected_cnpjs = [options_dict[label] for label in selected_labels]
 
 date_range = st.date_input(
     "Intervalo de análise:",
@@ -48,38 +59,38 @@ start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[
 # =======================================
 if selected_cnpjs:
 
-    # Caminho dos parquets
-    folder_path = os.path.join(os.path.dirname(__file__), "dados_parquet")
-    parquet_pattern = os.path.join(folder_path, "*.parquet")
+    # Conexão com banco
+    con = duckdb.connect(DB_PATH)
 
-    # Lista de CNPJs → SQL
+    # Lista para SQL
     cnpjs_sql = ",".join([f"'{c}'" for c in selected_cnpjs])
 
-    # CONSULTA DUCKDB — ultra rápida
+    # CONSULTA DIRETO DO BANCO
     query = f"""
         SELECT *
-        FROM read_parquet('{parquet_pattern}')
+        FROM fundos
         WHERE CNPJ IN ({cnpjs_sql})
-        ORDER BY DATA
+          AND DATA BETWEEN '{start_date.date()}' AND '{end_date.date()}'
+        ORDER BY DATA;
     """
 
-    df = duckdb.query(query).df()
+    df = con.execute(query).df()
     df["DATA"] = pd.to_datetime(df["DATA"])
 
-    df = df[(df["DATA"] >= start_date) & (df["DATA"] <= end_date)]
-
     if df.empty:
-        st.warning("Nenhum dado encontrado.")
+        st.warning("Nenhum dado retornado para este período.")
         st.stop()
 
     # =======================================
-    # DEFINIR A PRIMEIRA DATA COMUM ENTRE FUNDOS
+    # IDENTIFICAR PRIMEIRA DATA COMUM ENTRE FUNDOS
     # =======================================
     min_dates = df.groupby("CNPJ")["DATA"].min()
-    true_start = min_dates.max()    # lógica correta
+    true_start = min_dates.max()
 
-    st.info(f"📌 A análise inicia automaticamente em **{true_start.date()}**, "
-            f"que é o primeiro ponto em comum entre os fundos selecionados.")
+    st.info(
+        f"📌 A análise começa em **{true_start.date()}**, "
+        f"primeira data em comum entre os fundos."
+    )
 
     df = df[df["DATA"] >= true_start]
 
@@ -88,64 +99,48 @@ if selected_cnpjs:
     # =======================================
     tabela = df.pivot_table(index="DATA", columns="CNPJ", values="COTA").dropna()
 
-    # Retorno mensal
     rent_mensal = tabela.pct_change().fillna(0)
-
-    # Rentabilidade acumulada dos fundos
     rent_acum = (rent_mensal + 1).cumprod() - 1
 
     # =======================================
-    # CDI DIÁRIO — DERIVADO DO CDI MENSAL
+    # CDI DIÁRIO CALCULADO A PARTIR DO CDI MENSAL
     # =======================================
-
-    # CDI_M_Correto já tem índice = datas mensais
     cdi = CDI_M_Correto.copy()
     cdi.index = pd.to_datetime(cdi.index)
     cdi = cdi.sort_index()
-
-    # Filtrar pelo intervalo real da análise
     cdi = cdi[(cdi.index >= true_start) & (cdi.index <= end_date)]
 
     all_days = tabela.index
     cdi_daily_list = []
 
     for month in cdi.index:
-
         month_str = month.strftime("%Y-%m")
         cdi_mes = cdi.loc[month, "CDI"]
 
-        # Dias do mês presentes nos dados dos fundos
-        mask = all_days.strftime("%Y-%m") == month_str
-        dias_mes = all_days[mask]
-
+        dias_mes = all_days[all_days.strftime("%Y-%m") == month_str]
         if len(dias_mes) == 0:
             continue
 
-        # CDI diário calculado
         cdi_daily_rate = (1 + cdi_mes) ** (1 / len(dias_mes)) - 1
-
         serie_mes = pd.Series([cdi_daily_rate] * len(dias_mes), index=dias_mes)
         cdi_daily_list.append(serie_mes)
 
     cdi_daily = pd.concat(cdi_daily_list).sort_index()
-
-    # Primeiro dia deve ser 0
     cdi_daily.iloc[0] = 0
-
-    # CDI acumulado
     cdi_acum = (cdi_daily + 1).cumprod() - 1
 
     # =======================================
-    # GRÁFICO FINAL
+    # GRÁFICO
     # =======================================
     st.subheader("📊 Rentabilidade Acumulada — Fundos vs CDI Diário")
 
     fig = go.Figure()
 
-    # Fundos
     for cnpj in rent_acum.columns:
         serie = rent_acum[cnpj]
-        nome = fundos_unicos.loc[fundos_unicos["CNPJ"] == cnpj, "Nome"].values[0]
+        nome = fundos_unicos.loc[
+            fundos_unicos["CNPJ"] == cnpj, "Nome"
+        ].values[0]
 
         fig.add_trace(
             go.Scatter(
@@ -157,13 +152,12 @@ if selected_cnpjs:
             )
         )
 
-    # CDI
     fig.add_trace(
         go.Scatter(
             x=cdi_acum.index,
             y=cdi_acum.values,
             mode="lines",
-            name="CDI Diário (via CDI Mensal)",
+            name="CDI Diário",
             line=dict(width=4, dash="dash", color="black")
         )
     )
@@ -178,7 +172,10 @@ if selected_cnpjs:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("📋 Dados Brutos (Fundos)")
+    # =======================================
+    # Tabela bruta
+    # =======================================
+    st.subheader("📋 Dados Brutos")
     st.dataframe(df)
 
 else:
