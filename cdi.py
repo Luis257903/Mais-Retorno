@@ -1,19 +1,15 @@
+import duckdb
 import pandas as pd
 import requests
 from io import StringIO
+from datetime import datetime
 
-def get_bcb_series(series_id, start='2000-01-01'):
+DB_PATH = "base.duckdb"
+
+def get_bcb_series(series_id):
     """
-    Baixa uma série histórica do Banco Central do Brasil (BCB),
-    com tratamento para respostas com ou sem aspas, valores ausentes
-    e erros de conexão, retornando índice como DatetimeIndex.
-
-    Parâmetros:
-        series_id (int): ID da série no SGS/BCB
-        start (str): Data inicial no formato 'YYYY-MM-DD'
-
-    Retorno:
-        pd.DataFrame: Série histórica com índice de datas e coluna 'valor'
+    Baixa série completa do BCB (desde o início),
+    com tratamento de erros e CSV inconsistente.
     """
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{series_id}/dados?formato=csv"
 
@@ -21,58 +17,53 @@ def get_bcb_series(series_id, start='2000-01-01'):
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         r.encoding = "utf-8-sig"
-    except requests.RequestException as e:
-        print(f"[ERRO] Falha ao acessar série {series_id}: {e}")
-        df = pd.DataFrame(columns=["valor"])
-        df.index = pd.to_datetime(df.index, errors="coerce")
-        return df
+    except Exception as e:
+        print(f"[ERRO] Não conseguiu baixar série {series_id}: {e}")
+        return pd.DataFrame()
 
-    # Validação do cabeçalho, removendo aspas para comparar
-    primeira_linha = r.text.strip().split("\n", 1)[0].lower().replace('"', '')
+    primeira_linha = r.text.split("\n", 1)[0].lower().replace('"', "")
     if not primeira_linha.startswith("data;valor"):
-        print(f"[ERRO] Resposta inesperada para série {series_id}: {r.text[:200]}")
-        df = pd.DataFrame(columns=["valor"])
-        df.index = pd.to_datetime(df.index, errors="coerce")
-        return df
+        print(f"[ERRO] Resposta inesperada para série {series_id}.")
+        return pd.DataFrame()
 
-    # Leitura do CSV com tratamento de erros e valores ausentes
-    try:
-        df = pd.read_csv(StringIO(r.text), sep=';', decimal=',', na_values=['', 'NA', '-', '"'])
-    except pd.errors.ParserError as e:
-        print(f"[ERRO] Falha ao processar CSV da série {series_id}: {e}")
-        df = pd.DataFrame(columns=["valor"])
-        df.index = pd.to_datetime(df.index, errors="coerce")
-        return df
+    df = pd.read_csv(StringIO(r.text), sep=";", decimal=",")
+    df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
+    df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
 
-    # Conversão de datas e filtro inicial
-    df['data'] = pd.to_datetime(df['data'], dayfirst=True, errors='coerce')
-    df.dropna(subset=['data'], inplace=True)
-    df.set_index('data', inplace=True)
-    df = df[df.index >= pd.to_datetime(start)]
-
-    # Garantir índice como datetime, mesmo se vazio
-    df.index = pd.to_datetime(df.index, errors="coerce")
+    df = df.dropna(subset=["data"])
+    df = df.set_index("data")
 
     return df
 
+# ======== BAIXA SÉRIES ========
+CDI = get_bcb_series(4391).rename(columns={"valor": "CDI"})
+IPCA = get_bcb_series(433).rename(columns={"valor": "IPCA"})
+TR = get_bcb_series(7811).rename(columns={"valor": "TR"})
 
-# CDI
-CDI = get_bcb_series(4391)
-CDI.rename(columns={'valor': 'CDI'}, inplace=True)
-CDI.index.name = "Data"
-CDI_M = CDI.resample("ME").last()
-CDI_M_Correto = CDI_M / 100
+# Converter para taxas corretas (mensal)
+CDI_M = (CDI.resample("ME").last()) / 100
+IPCA_M = (IPCA.resample("ME").last()) / 100
+TR_M = (TR.resample("ME").last()) / 100
 
-# IPCA
-IPCA = get_bcb_series(433)
-IPCA.rename(columns={'valor': 'IPCA'}, inplace=True)
-IPCA.index.name = "Data"
-IPCA_M = IPCA.resample("ME").last()
-IPCA_M_Correto = IPCA_M / 100
+# Unir todas
+indicadores = pd.concat([CDI_M, IPCA_M, TR_M], axis=1)
+indicadores.index = indicadores.index.rename("Data")
 
-# TR
-TR = get_bcb_series(7811)
-TR.rename(columns={'valor': 'TR'}, inplace=True)
-TR.index.name = "Data"
-TR_M = TR.resample("ME").last()
-TR_M_Correto = TR_M / 100
+# ======== INSERIR NO DUCKDB ========
+con = duckdb.connect(DB_PATH)
+
+con.execute("""
+CREATE TABLE IF NOT EXISTS indicadores_bcb (
+    Data DATE,
+    CDI DOUBLE,
+    IPCA DOUBLE,
+    TR DOUBLE
+)
+""")
+
+con.execute("DELETE FROM indicadores_bcb")   # substitui tudo
+con.execute("INSERT INTO indicadores_bcb SELECT * FROM indicadores")
+
+con.close()
+
+print("Indicadores inseridos no DuckDB com sucesso.")
