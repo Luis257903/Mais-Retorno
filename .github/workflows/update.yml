@@ -1,1 +1,40 @@
+name: Atualizar Dados CVM + BCB
 
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install pandas requests pyarrow duckdb
+
+      - name: Atualizar Fundos
+        run: python dados_fundos.py
+
+      - name: Atualizar Indicadores BCB
+        run: cdi.py
+
+      - name: Commit e Push
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+
+          git add base.duckdb || true
+          git commit -m "Atualização automática" || true
+          git push
