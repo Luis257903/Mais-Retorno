@@ -1,0 +1,3 @@
+# Banco DuckDB não deve ir para o Git
+base.duckdb
+*.duckdb
