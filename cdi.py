@@ -7,10 +7,6 @@ from datetime import datetime
 DB_PATH = "base.duckdb"
 
 def get_bcb_series(series_id):
-    """
-    Baixa série completa do BCB (desde o início),
-    com tratamento de erros e CSV inconsistente.
-    """
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{series_id}/dados?formato=csv"
 
     try:
@@ -29,27 +25,36 @@ def get_bcb_series(series_id):
     df = pd.read_csv(StringIO(r.text), sep=";", decimal=",")
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
-
-    df = df.dropna(subset=["data"])
-    df = df.set_index("data")
-
+    df = df.dropna(subset=["data"]).set_index("data")
     return df
 
-# ======== BAIXA SÉRIES ========
+
+# === BAIXA AS SÉRIES ===
 CDI = get_bcb_series(4391).rename(columns={"valor": "CDI"})
 IPCA = get_bcb_series(433).rename(columns={"valor": "IPCA"})
-TR = get_bcb_series(7811).rename(columns={"valor": "TR"})
+TR   = get_bcb_series(7811).rename(columns={"valor": "TR"})
 
-# Converter para taxas corretas (mensal)
+# Resamplar para mensal
 CDI_M = (CDI.resample("ME").last()) / 100
 IPCA_M = (IPCA.resample("ME").last()) / 100
 TR_M = (TR.resample("ME").last()) / 100
 
-# Unir todas
+# Concat
 indicadores = pd.concat([CDI_M, IPCA_M, TR_M], axis=1)
-indicadores.index = indicadores.index.rename("Data")
+indicadores.index.name = "Data"
 
-# ======== INSERIR NO DUCKDB ========
+# === GARANTE TODAS AS COLUNAS ===
+for col in ["CDI", "IPCA", "TR"]:
+    if col not in indicadores.columns:
+        indicadores[col] = None
+
+# Ordem exata
+indicadores = indicadores[["CDI", "IPCA", "TR"]]
+
+# Data vira coluna
+indicadores = indicadores.reset_index()
+
+# === GRAVA NO DUCKDB ===
 con = duckdb.connect(DB_PATH)
 
 con.execute("""
@@ -61,7 +66,10 @@ CREATE TABLE IF NOT EXISTS indicadores_bcb (
 )
 """)
 
-con.execute("DELETE FROM indicadores_bcb")   # substitui tudo
+# Limpa a tabela toda (sempre reescreve)
+con.execute("DELETE FROM indicadores_bcb")
+
+# Insere corretamente
 con.execute("INSERT INTO indicadores_bcb SELECT * FROM indicadores")
 
 con.close()
