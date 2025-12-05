@@ -37,3 +37,6 @@ if cnpj_input:
 
     except Exception as e:
         st.error(f"Erro ao consultar os dados: {e}")
+
+duckdb.sql("PRAGMA show_tables")
+duckdb.sql("DESCRIBE SELECT * FROM nome_da_tabela LIMIT 5")
