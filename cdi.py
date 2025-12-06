@@ -43,6 +43,8 @@ TR_M = (TR.resample("ME").last()) / 100
 indicadores = pd.concat([CDI_M, IPCA_M, TR_M], axis=1)
 indicadores.index.name = "Data"
 
+indicadores = indicadores.dropna(subset=["CDI"])
+
 # === GARANTE TODAS AS COLUNAS ===
 for col in ["CDI", "IPCA", "TR"]:
     if col not in indicadores.columns:
