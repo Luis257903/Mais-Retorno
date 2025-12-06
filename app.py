@@ -195,3 +195,5 @@ if selected_cnpjs:
 
 else:
     st.info("Selecione pelo menos um fundo.")
+
+st.write(con.execute("SHOW TABLES").df())
