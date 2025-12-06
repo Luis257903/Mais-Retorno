@@ -196,6 +196,6 @@ if selected_cnpjs:
 else:
     st.info("Selecione pelo menos um fundo.")
 
-st.write("Último dia disponível nas cotas:", tabela.index.max())
+
 
 
