@@ -2,8 +2,8 @@ name: Atualizar Dados CVM + BCB + DuckDB
 
 on:
   schedule:
-    - cron: "0 8 * * *"     # todos os dias às 08:00 UTC
-  workflow_dispatch:        # executar manualmente
+    - cron: "0 8 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -39,7 +39,15 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
 
-          git add dados_parquet || true
-          git add base.duckdb || true
+          git add dados_parquet base.duckdb || true
           git commit -m "Atualização automática (CVM + BCB + DuckDB)" || true
           git push
+
+      - name: Publicar base.duckdb em banco-latest
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: banco-latest
+          release_name: "Banco DuckDB mais recente"
+          files: base.duckdb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
